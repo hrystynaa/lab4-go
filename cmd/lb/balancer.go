@@ -29,26 +29,7 @@ var (
 		"server2:8080",
 		"server3:8080",
 	}
-	serverHealthStatus = make(map[string]bool)
 )
-
-func proactiveServerCheck() {
-	for {
-		for i := range serversPool {
-			server := serversPool[i]
-			if health(server) {
-				serverHealthStatus[server] = true
-			} else {
-				serverHealthStatus[server] = false
-			}
-		}
-		time.Sleep(10 * time.Second)
-	}
-}
-
-func isServerHealthy(server string) bool {
-	return serverHealthStatus[server]
-}
 
 func scheme() string {
 	if *https {
@@ -104,19 +85,48 @@ func forward(dst string, rw http.ResponseWriter, r *http.Request) error {
 	}
 }
 
+func main() {
+	flag.Parse()
+
+	healthChecker := &HealthChecker{}
+	healthChecker.serverHealthStatus = map[string]bool{}
+	healthChecker.health = health
+
+	balancer := &LoadBalancer{}
+	balancer.healthChecker = healthChecker
+
+	go balancer.proactiveServerCheck()
+
+	frontend := httptools.CreateServer(*port, http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		server := balancer.balance(r.URL.Path)
+		forward(server, rw, r)
+	}))
+
+	log.Println("Starting load balancer...")
+	log.Printf("Tracing support enabled: %t", *traceEnabled)
+	frontend.Start()
+	signal.WaitForTerminationSignal()
+}
+
+type LoadBalancer struct {
+	healthChecker *HealthChecker
+}
+
+func (lb *LoadBalancer) proactiveServerCheck() {
+	for {
+		lb.healthChecker.CheckAllServers()
+		time.Sleep(10 * time.Second)
+	}
+}
+
 func hash(input string) uint32 {
 	h := fnv.New32a()
 	h.Write([]byte(input))
 	return h.Sum32()
 }
 
-func balance(urlPath string) string {
-	var healthyServers []string
-	for _, server := range serversPool {
-		if isServerHealthy(server) {
-			healthyServers = append(healthyServers, server)
-		}
-	}
+func (lb *LoadBalancer) balance(urlPath string) string {
+	healthyServers := lb.healthChecker.GetHealthyServers()
 
 	if len(healthyServers) == 0 {
 		log.Println("No servers available")
@@ -127,20 +137,27 @@ func balance(urlPath string) string {
 	return healthyServers[serverIndex]
 }
 
-func main() {
-	flag.Parse()
+type HealthChecker struct {
+	serverHealthStatus map[string]bool
+	health             func(dst string) bool
+}
 
-	// TODO: Використовуйте дані про стан сервреа, щоб підтримувати список тих серверів, яким можна відправляти ззапит.
-	go proactiveServerCheck()
+func (hc *HealthChecker) CheckAllServers() {
+	for _, server := range serversPool {
+		if hc.health(server) {
+			hc.serverHealthStatus[server] = true
+		} else {
+			hc.serverHealthStatus[server] = false
+		}
+	}
+}
 
-	frontend := httptools.CreateServer(*port, http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
-		// TODO: Рееалізуйте свій алгоритм балансувальника.
-		server := balance(r.URL.Path)
-		forward(server, rw, r)
-	}))
-
-	log.Println("Starting load balancer...")
-	log.Printf("Tracing support enabled: %t", *traceEnabled)
-	frontend.Start()
-	signal.WaitForTerminationSignal()
+func (hc *HealthChecker) GetHealthyServers() []string {
+	var healthyServers []string
+	for _, server := range serversPool {
+		if hc.serverHealthStatus[server] {
+			healthyServers = append(healthyServers, server)
+		}
+	}
+	return healthyServers
 }
