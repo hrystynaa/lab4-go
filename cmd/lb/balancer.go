@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"log"
 	"net/http"
@@ -14,21 +15,40 @@ import (
 )
 
 var (
-	port = flag.Int("port", 8090, "load balancer port")
+	port       = flag.Int("port", 8090, "load balancer port")
 	timeoutSec = flag.Int("timeout-sec", 3, "request timeout time in seconds")
-	https = flag.Bool("https", false, "whether backends support HTTPs")
+	https      = flag.Bool("https", false, "whether backends support HTTPs")
 
 	traceEnabled = flag.Bool("trace", false, "whether to include tracing information into responses")
 )
 
 var (
-	timeout = time.Duration(*timeoutSec) * time.Second
+	timeout     = time.Duration(*timeoutSec) * time.Second
 	serversPool = []string{
 		"server1:8080",
 		"server2:8080",
 		"server3:8080",
 	}
+	serverHealthStatus = make(map[string]bool)
 )
+
+func proactiveServerCheck() {
+	for {
+		for i := range serversPool {
+			server := serversPool[i]
+			if health(server) {
+				serverHealthStatus[server] = true
+			} else {
+				serverHealthStatus[server] = false
+			}
+		}
+		time.Sleep(10 * time.Second)
+	}
+}
+
+func isServerHealthy(server string) bool {
+	return serverHealthStatus[server]
+}
 
 func scheme() string {
 	if *https {
@@ -84,22 +104,39 @@ func forward(dst string, rw http.ResponseWriter, r *http.Request) error {
 	}
 }
 
+func hash(input string) uint32 {
+	h := fnv.New32a()
+	h.Write([]byte(input))
+	return h.Sum32()
+}
+
+func balance(urlPath string) string {
+	var healthyServers []string
+	for _, server := range serversPool {
+		if isServerHealthy(server) {
+			healthyServers = append(healthyServers, server)
+		}
+	}
+
+	if len(healthyServers) == 0 {
+		log.Println("No servers available")
+		return ""
+	}
+
+	serverIndex := int(hash(urlPath) % uint32(len(healthyServers)))
+	return healthyServers[serverIndex]
+}
+
 func main() {
 	flag.Parse()
 
 	// TODO: Використовуйте дані про стан сервреа, щоб підтримувати список тих серверів, яким можна відправляти ззапит.
-	for _, server := range serversPool {
-		server := server
-		go func() {
-			for range time.Tick(10 * time.Second) {
-				log.Println(server, health(server))
-			}
-		}()
-	}
+	go proactiveServerCheck()
 
 	frontend := httptools.CreateServer(*port, http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		// TODO: Рееалізуйте свій алгоритм балансувальника.
-		forward(serversPool[0], rw, r)
+		server := balance(r.URL.Path)
+		forward(server, rw, r)
 	}))
 
 	log.Println("Starting load balancer...")
