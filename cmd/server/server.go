@@ -48,6 +48,36 @@ func main() {
 		})
 	})
 
+	h.HandleFunc("/api/v1/some-data2", func(rw http.ResponseWriter, r *http.Request) {
+		respDelayString := os.Getenv(confResponseDelaySec)
+		if delaySec, parseErr := strconv.Atoi(respDelayString); parseErr == nil && delaySec > 0 && delaySec < 300 {
+			time.Sleep(time.Duration(delaySec) * time.Second)
+		}
+
+		report.Process(r)
+
+		rw.Header().Set("content-type", "application/json")
+		rw.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(rw).Encode([]string{
+			"1", "2",
+		})
+	})
+
+	h.HandleFunc("/api/v1/some-data5", func(rw http.ResponseWriter, r *http.Request) {
+		respDelayString := os.Getenv(confResponseDelaySec)
+		if delaySec, parseErr := strconv.Atoi(respDelayString); parseErr == nil && delaySec > 0 && delaySec < 300 {
+			time.Sleep(time.Duration(delaySec) * time.Second)
+		}
+
+		report.Process(r)
+
+		rw.Header().Set("content-type", "application/json")
+		rw.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(rw).Encode([]string{
+			"1", "2",
+		})
+	})
+
 	h.Handle("/report", report)
 
 	server := httptools.CreateServer(*port, h)
