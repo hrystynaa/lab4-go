@@ -52,6 +52,15 @@ func (s *IntegrationSuite) TestBalancer(c *C) {
 	c.Check(respr.Header.Get("lb-from"), Equals, "server1:8080")
 }
 
-// func BenchmarkBalancer(b *testing.B) {
-// 	// TODO: Реалізуйте інтеграційний бенчмарк для балансувальникка.
-// }
+func (s *IntegrationSuite) BenchmarkBalancer(c *C) {
+  if _, exists := os.LookupEnv("INTEGRATION_TEST"); !exists {
+    c.Skip("Integration test is not enabled")
+  }
+
+  for i := 0; i < c.N; i++ {
+    _, err := client.Get(fmt.Sprintf("%s/api/v1/some-data", baseAddress))
+    if err != nil {
+      c.Error(err)
+    }
+  }
+}
