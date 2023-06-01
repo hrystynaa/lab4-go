@@ -18,13 +18,29 @@ var ErrNotFound = fmt.Errorf("record does not exist")
 
 type hashIndex map[string]int64
 
+type IndexOp struct {
+	isWrite bool
+	key     string
+	index   int64
+}
+
+type KeyPosition struct {
+	segment  *Segment
+	position int64
+}
+
 type Db struct {
 	segments     []*Segment
 	out          *os.File
+	outPath      string
 	outOffset    int64
 	dir          string
 	segmentSize  int64
 	segmentIndex int
+	indexOps     chan IndexOp
+	keyPositions chan *KeyPosition
+	putOps       chan entry
+	putDone      chan error
 }
 
 type Segment struct {
@@ -40,7 +56,7 @@ func (db *Db) addSegment() error {
 	}
 	db.out = f
 	db.outOffset = 0
-
+	db.outPath = filePath
 	segment := &Segment{
 		filePath: filePath,
 		index:    make(hashIndex),
@@ -55,9 +71,13 @@ func (db *Db) addSegment() error {
 
 func NewDb(dir string, segmentSize int64) (*Db, error) {
 	db := &Db{
-		segments:    make([]*Segment, 0),
-		dir:         dir,
-		segmentSize: segmentSize,
+		segments:     make([]*Segment, 0),
+		dir:          dir,
+		segmentSize:  segmentSize,
+		indexOps:     make(chan IndexOp),
+		keyPositions: make(chan *KeyPosition),
+		putOps:       make(chan entry),
+		putDone:      make(chan error),
 	}
 
 	if err := db.addSegment(); err != nil {
@@ -67,7 +87,41 @@ func NewDb(dir string, segmentSize int64) (*Db, error) {
 	if err := db.recover(); err != nil && err != io.EOF {
 		return nil, err
 	}
+	db.startIndexRoutine()
+	db.startPutRoutine()
+
 	return db, nil
+}
+
+func (db *Db) startIndexRoutine() {
+	go func() {
+		for {
+			op := <-db.indexOps
+			if op.isWrite {
+				db.segments[len(db.segments)-1].index[op.key] = db.outOffset
+				db.outOffset += op.index
+			} else {
+				var err error
+				for i := len(db.segments) - 1; i >= 0; i-- {
+					segment := db.segments[i]
+					position, ok := segment.index[op.key]
+					if ok {
+						db.keyPositions <- &KeyPosition{
+							segment,
+							position,
+						}
+						err = nil
+						break
+					} else {
+						err = ErrNotFound
+					}
+				}
+				if err != nil {
+					db.keyPositions <- nil
+				}
+			}
+		}
+	}()
 }
 
 func (db *Db) compact() {
@@ -161,31 +215,64 @@ func (db *Db) Close() error {
 }
 
 func (db *Db) Get(key string) (string, error) {
-	for i := len(db.segments) - 1; i >= 0; i-- {
-		segment := db.segments[i]
-		position, ok := segment.index[key]
-		if ok {
-			file, err := os.Open(segment.filePath)
-			if err != nil {
-				return "", err
-			}
-			defer file.Close()
 
-			_, err = file.Seek(position, io.SeekStart)
-			if err != nil {
-				return "", err
-			}
+	op := IndexOp{
+		isWrite: false,
+		key:     key,
+	}
+	db.indexOps <- op
+	keyPos := <-db.keyPositions
 
-			reader := bufio.NewReader(file)
-			value, err := readValue(reader)
-			if err != nil {
-				return "", err
-			}
-			return value, nil
-		}
+	if keyPos == nil {
+		return "", ErrNotFound
+	}
+	file, err := os.Open(keyPos.segment.filePath)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	_, err = file.Seek(keyPos.position, 0)
+	if err != nil {
+		return "", err
 	}
 
-	return "", ErrNotFound
+	reader := bufio.NewReader(file)
+	value, err := readValue(reader)
+	if err != nil {
+		return "", err
+	}
+	return value, nil
+}
+
+func (db *Db) startPutRoutine() {
+	go func() {
+		for {
+			e := <-db.putOps
+			length := e.length()
+			stat, err := db.out.Stat()
+			if err != nil {
+				db.putDone <- err
+				continue
+			}
+			if stat.Size()+length > db.segmentSize {
+				err := db.addSegment()
+				if err != nil {
+					db.putDone <- err
+					continue
+				}
+			}
+			n, err := db.out.Write(e.Encode())
+			if err == nil {
+				db.indexOps <- IndexOp{
+					isWrite: true,
+					key:     e.key,
+					index:   int64(n),
+				}
+			}
+			db.putDone <- nil
+		}
+	}()
 }
 
 func (db *Db) Put(key, value string) error {
@@ -193,36 +280,6 @@ func (db *Db) Put(key, value string) error {
 		key:   key,
 		value: value,
 	}
-	length := e.length()
-	if db.shouldCreateNewSegment(length) {
-		if err := db.addSegment(); err != nil {
-			return err
-		}
-	}
-	n, err := db.writeEntry(e)
-	if err == nil {
-		db.updateIndex(key, db.outOffset)
-		db.outOffset += n
-	}
-	return err
-}
-
-func (db *Db) shouldCreateNewSegment(entryLength int64) bool {
-	stat, err := db.out.Stat()
-	if err != nil {
-		return false
-	}
-	return stat.Size()+int64(entryLength) > db.segmentSize
-}
-
-func (db *Db) writeEntry(e entry) (int64, error) {
-	n, err := db.out.Write(e.Encode())
-	if err != nil {
-		return 0, err
-	}
-	return int64(n), nil
-}
-
-func (db *Db) updateIndex(key string, position int64) {
-	db.segments[len(db.segments)-1].index[key] = position
+	db.putOps <- e
+	return <-db.putDone
 }
