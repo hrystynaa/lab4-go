@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestDb_Put(t *testing.T) {
@@ -14,7 +15,7 @@ func TestDb_Put(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 
-	db, err := NewDb(dir)
+	db, err := NewDb(dir, 500)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +27,7 @@ func TestDb_Put(t *testing.T) {
 		{"key3", "value3"},
 	}
 
-	outFile, err := os.Open(filepath.Join(dir, outFileName))
+	outFile, err := os.Open(filepath.Join(dir, outFileName+"0"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +74,7 @@ func TestDb_Put(t *testing.T) {
 		if err := db.Close(); err != nil {
 			t.Fatal(err)
 		}
-		db, err = NewDb(dir)
+		db, err = NewDb(dir, 300)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -96,7 +97,7 @@ func TestDb_Segmentation(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 
-	db, err := NewDb(dir, 150)
+	db, err := NewDb(dir, 90)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +134,7 @@ func TestDb_Segmentation(t *testing.T) {
 	t.Run("delete old values", func(t *testing.T) {
 		value, _ := db.Get("key1")
 		if value != "value13" {
-			t.Errorf("Bad value returned expected value22, got %s", value)
+			t.Errorf("Bad value returned expected value13, got %s", value)
 		}
 		value1, _ := db.Get("key2")
 		if value1 != "value22" {

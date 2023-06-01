@@ -67,3 +67,7 @@ func readValue(in *bufio.Reader) (string, error) {
 
 	return string(data), nil
 }
+
+func (e *entry) length() int64 {
+	return int64(len(e.key) + len(e.value) + 12)
+}
