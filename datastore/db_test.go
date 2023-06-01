@@ -132,6 +132,21 @@ func TestDb_Segmentation(t *testing.T) {
 	})
 
 	t.Run("delete old values", func(t *testing.T) {
+		outFile, err := os.Open(db.segments[0].filePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer outFile.Close()
+		outInfo, err := outFile.Stat()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		expectedSize := int64(69)
+		if outInfo.Size() != expectedSize {
+			t.Errorf("Unexpected size (%d vs %d)", expectedSize, outInfo.Size())
+		}
+
 		value, _ := db.Get("key1")
 		if value != "value13" {
 			t.Errorf("Bad value returned expected value13, got %s", value)
