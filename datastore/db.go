@@ -30,22 +30,34 @@ type KeyPosition struct {
 }
 
 type Db struct {
-	segments     []*Segment
-	out          *os.File
-	outPath      string
-	outOffset    int64
-	dir          string
-	segmentSize  int64
-	segmentIndex int
-	indexOps     chan IndexOp
-	keyPositions chan *KeyPosition
-	putOps       chan entry
-	putDone      chan error
+	segments      []*Segment
+	out           *os.File
+	outPath       string
+	outOffset     int64
+	dir           string
+	segmentSize   int64
+	segmentIndex  int
+	indexOps      chan IndexOp
+	keyPositions  chan *KeyPosition
+	putOps        chan entry
+	putDone       chan error
+	workerRequest chan WorkerRequest
+	workerResult  chan WorkerResult
 }
 
 type Segment struct {
 	index    hashIndex
 	filePath string
+}
+
+type WorkerResult struct {
+	Value string
+	Err   error
+}
+
+type WorkerRequest struct {
+	Key        string
+	ResultChan chan WorkerResult
 }
 
 func (db *Db) addSegment() error {
@@ -71,13 +83,20 @@ func (db *Db) addSegment() error {
 
 func NewDb(dir string, segmentSize int64) (*Db, error) {
 	db := &Db{
-		segments:     make([]*Segment, 0),
-		dir:          dir,
-		segmentSize:  segmentSize,
-		indexOps:     make(chan IndexOp),
-		keyPositions: make(chan *KeyPosition),
-		putOps:       make(chan entry),
-		putDone:      make(chan error),
+		segments:      make([]*Segment, 0),
+		dir:           dir,
+		segmentSize:   segmentSize,
+		indexOps:      make(chan IndexOp),
+		keyPositions:  make(chan *KeyPosition),
+		putOps:        make(chan entry),
+		putDone:       make(chan error),
+		workerRequest: make(chan WorkerRequest),
+		workerResult:  make(chan WorkerResult),
+	}
+
+	numWorkers := 10 // Кількість виконавців в пулі
+	for i := 0; i < numWorkers; i++ {
+		go db.worker()
 	}
 
 	if err := db.addSegment(); err != nil {
@@ -91,6 +110,43 @@ func NewDb(dir string, segmentSize int64) (*Db, error) {
 	db.startPutRoutine()
 
 	return db, nil
+}
+
+func (db *Db) worker() {
+	for key := range db.workerRequest {
+		op := IndexOp{
+			isWrite: false,
+			key:     key.Key,
+		}
+		db.indexOps <- op
+		keyPos := <-db.keyPositions
+
+		if keyPos == nil {
+			continue
+		}
+
+		file, err := os.Open(keyPos.segment.filePath)
+		if err != nil {
+			db.workerResult <- WorkerResult{"", err}
+			continue
+		}
+		defer file.Close()
+
+		_, err = file.Seek(keyPos.position, 0)
+		if err != nil {
+			db.workerResult <- WorkerResult{"", err}
+			continue
+		}
+
+		reader := bufio.NewReader(file)
+		value, err := readValue(reader)
+		if err != nil {
+			db.workerResult <- WorkerResult{"", err}
+			continue
+		}
+
+		db.workerResult <- WorkerResult{value, nil}
+	}
 }
 
 func (db *Db) startIndexRoutine() {
@@ -215,34 +271,17 @@ func (db *Db) Close() error {
 }
 
 func (db *Db) Get(key string) (string, error) {
+	resultChan := make(chan WorkerResult)
+	db.workerRequest <- WorkerRequest{Key: key, ResultChan: resultChan}
 
-	op := IndexOp{
-		isWrite: false,
-		key:     key,
-	}
-	db.indexOps <- op
-	keyPos := <-db.keyPositions
+	go func() {
+		result := <-db.workerResult
+		resultChan <- result
+	}()
 
-	if keyPos == nil {
-		return "", ErrNotFound
-	}
-	file, err := os.Open(keyPos.segment.filePath)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
+	result := <-resultChan
 
-	_, err = file.Seek(keyPos.position, 0)
-	if err != nil {
-		return "", err
-	}
-
-	reader := bufio.NewReader(file)
-	value, err := readValue(reader)
-	if err != nil {
-		return "", err
-	}
-	return value, nil
+	return result.Value, result.Err
 }
 
 func (db *Db) startPutRoutine() {
