@@ -39,7 +39,7 @@ func (s *IntegrationSuite) TestBalancer(c *C) {
 	}
 	c.Check(resp2.Header.Get("lb-from"), Equals, "server2:8080")
 
-	resp3, err := client.Get(fmt.Sprintf("%s/api/v1/some-data?key=codequeens", baseAddress))
+	resp3, err := client.Get(fmt.Sprintf("%s/api/v1/some-data", baseAddress))
 	if err != nil {
 		c.Error(err)
 	}
@@ -58,7 +58,7 @@ func (s *IntegrationSuite) BenchmarkBalancer(c *C) {
 	}
 
 	for i := 0; i < c.N; i++ {
-		_, err := client.Get(fmt.Sprintf("%s/api/v1/some-data?key=codequeens", baseAddress))
+		_, err := client.Get(fmt.Sprintf("%s/api/v1/some-data", baseAddress))
 		if err != nil {
 			c.Error(err)
 		}

@@ -20,6 +20,7 @@ var port = flag.Int("port", 8080, "server port")
 const confResponseDelaySec = "CONF_RESPONSE_DELAY_SEC"
 const confHealthFailure = "CONF_HEALTH_FAILURE"
 
+// -----------------------------------------------------------------------
 type Request struct {
 	Value string "json:\"value\""
 }
@@ -29,8 +30,11 @@ type Response struct {
 	Value string "json:\"value\""
 }
 
+// -------------------------------------------------------------------------
 func main() {
+	//--------------------------------
 	client := http.DefaultClient
+	//-------------------------------------
 	h := new(http.ServeMux)
 
 	h.HandleFunc("/health", func(rw http.ResponseWriter, r *http.Request) {
@@ -47,6 +51,7 @@ func main() {
 	report := make(Report)
 
 	h.HandleFunc("/api/v1/some-data", func(rw http.ResponseWriter, r *http.Request) {
+		//------------------------------------------------------------------------
 		key := r.URL.Query().Get("key")
 		if key == "" {
 			rw.WriteHeader(http.StatusBadRequest)
@@ -65,6 +70,8 @@ func main() {
 			rw.WriteHeader(http.StatusInternalServerError)
 			return
 		}
+
+		//-----------------------------------------------------------------------------------------
 
 		respDelayString := os.Getenv(confResponseDelaySec)
 		if delaySec, parseErr := strconv.Atoi(respDelayString); parseErr == nil && delaySec > 0 && delaySec < 300 {
@@ -114,7 +121,7 @@ func main() {
 
 	server := httptools.CreateServer(*port, h)
 	server.Start()
-
+	//-------------------------------------------------------
 	buff := new(bytes.Buffer)
 	body := Request{Value: time.Now().Format(time.RFC3339)}
 	if err := json.NewEncoder(buff).Encode(body); err != nil {
@@ -128,6 +135,6 @@ func main() {
 		return
 	}
 	defer res.Body.Close()
-
+	//---------------------------------------------------------------
 	signal.WaitForTerminationSignal()
 }
