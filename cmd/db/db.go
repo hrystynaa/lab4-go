@@ -31,7 +31,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	db, err := datastore.NewDb(dir, 90)
+	db, err := datastore.NewDb(dir, 500)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -47,13 +47,16 @@ func main() {
 				rw.WriteHeader(http.StatusNotFound)
 				return
 			}
-			resp := Response{
-				Key:   key,
-				Value: value,
-			}
+			// resp := Response{
+			// 	Key:   key,
+			// 	Value: value,
+			// }
 			rw.Header().Set("Content-Type", "application/json")
 			rw.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(rw).Encode(resp)
+			_ = json.NewEncoder(rw).Encode(Response{
+				Key:   key,
+				Value: value,
+			})
 
 		case http.MethodPost:
 			var body Request

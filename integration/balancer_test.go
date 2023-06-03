@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -20,6 +21,11 @@ const baseAddress = "http://balancer:8090"
 
 var client = http.Client{
 	Timeout: 3 * time.Second,
+}
+
+type Response struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
 }
 
 func (s *IntegrationSuite) TestBalancer(c *C) {
@@ -50,6 +56,20 @@ func (s *IntegrationSuite) TestBalancer(c *C) {
 		c.Error(err)
 	}
 	c.Check(respr.Header.Get("lb-from"), Equals, "server1:8080")
+
+	db, err := client.Get(fmt.Sprintf("%s/api/v1/some-data?key=codequeens", baseAddress))
+	if err != nil {
+		c.Error(err)
+	}
+	var body Response
+	err = json.NewDecoder(db.Body).Decode(&body)
+	if err != nil {
+		c.Error(err)
+	}
+	c.Check(body.Key, Equals, "codequeens")
+	if body.Value == "" {
+		c.Error(err)
+	}
 }
 
 func (s *IntegrationSuite) BenchmarkBalancer(c *C) {
