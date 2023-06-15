@@ -229,40 +229,49 @@ func (db *Db) recover() error {
 	var err error
 	var buf [bufSize]byte
 
-	in := bufio.NewReaderSize(db.out, bufSize)
-	for err == nil {
-		var (
-			header, data []byte
-			n            int
-		)
-		header, err = in.Peek(bufSize)
-		if err == io.EOF {
-			if len(header) == 0 {
-				return err
-			}
-		} else if err != nil {
+	for _, segment := range db.segments {
+		file, err := os.Open(segment.filePath)
+		if err != nil {
 			return err
 		}
-		size := binary.LittleEndian.Uint32(header)
+		defer file.Close()
 
-		if size < bufSize {
-			data = buf[:size]
-		} else {
-			data = make([]byte, size)
-		}
-		n, err = io.ReadFull(in, data)
-
-		if err == nil {
-			if n != int(size) {
-				return fmt.Errorf("corrupted file")
+		reader := bufio.NewReaderSize(file, bufSize)
+		for err == nil {
+			var (
+				header, data []byte
+				n            int
+			)
+			header, err = reader.Peek(bufSize)
+			if err == io.EOF {
+				if len(header) == 0 {
+					break
+				}
+			} else if err != nil {
+				return err
 			}
+			size := binary.LittleEndian.Uint32(header)
 
-			var e entry
-			e.Decode(data)
-			db.segments[len(db.segments)-1].index[e.key] = db.outOffset
-			db.outOffset += int64(n)
+			if size < bufSize {
+				data = buf[:size]
+			} else {
+				data = make([]byte, size)
+			}
+			n, err = io.ReadFull(reader, data)
+
+			if err == nil {
+				if n != int(size) {
+					return fmt.Errorf("corrupted file")
+				}
+
+				var e entry
+				e.Decode(data)
+				segment.index[e.key] = db.outOffset
+				db.outOffset += int64(n)
+			}
 		}
 	}
+
 	return err
 }
 
