@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/hrystynaa/lab4-go/httptools"
@@ -140,19 +141,26 @@ func (lb *LoadBalancer) balance(urlPath string) string {
 type HealthChecker struct {
 	serverHealthStatus map[string]bool
 	health             func(dst string) bool
+	mu                 sync.RWMutex
 }
 
 func (hc *HealthChecker) CheckAllServers() {
 	for _, server := range serversPool {
 		if hc.health(server) {
+			hc.mu.Lock()
 			hc.serverHealthStatus[server] = true
+			hc.mu.Unlock()
 		} else {
+			hc.mu.Lock()
 			hc.serverHealthStatus[server] = false
+			hc.mu.Unlock()
 		}
 	}
 }
 
 func (hc *HealthChecker) GetHealthyServers() []string {
+	hc.mu.RLock()
+	defer hc.mu.RUnlock()
 	var healthyServers []string
 	for _, server := range serversPool {
 		if hc.serverHealthStatus[server] {
